@@ -46,6 +46,10 @@
     box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     border-left: 8px solid #3182ce;
   }
+  .result-img {
+    width: 100%; max-height: 160px; object-fit: contain;
+    border-radius: 10px; margin-bottom: 10px; background: #f7fafc;
+  }
   .result-name { font-size: 19px; font-weight: bold; margin-bottom: 8px; }
   .result-location {
     font-size: 26px; font-weight: 900; color: #2b6cb0; margin-bottom: 6px;
@@ -70,7 +74,7 @@
   <h1>📦 재고 위치 찾기</h1>
 
   <div class="search-row">
-    <input type="text" id="searchBox" placeholder="상품명을 입력하거나 마이크를 눌러 말하세요" oninput="onSearchInput()">
+    <input type="text" id="searchBox" placeholder="상품명을 입력하거나 마이크를 눌러 말하세요" oninput="onSearchInput()" onkeydown="onSearchKeydown(event)">
     <button id="micBtn" onclick="startVoiceSearch()">🎤</button>
   </div>
   <div id="status"></div>
@@ -91,6 +95,7 @@
   const API_KEY = "dlwlsgksdmlworhvmfhrmfoa!!!";
 
   let allData = [];
+  let searchDebounceTimer = null;
 
   // 🌟 창고위치 코드 규칙: "XX#-Y##" → "OO#차 Y동 층 호"
   // 새 창고 접두사가 생기면 아래 맵에 한 줄만 추가하면 됩니다.
@@ -110,6 +115,9 @@
 
   function setStatus(msg) { document.getElementById('status').innerText = msg; }
 
+  // 🌟 [버그수정 - 2026.07] 검색어/데이터 양쪽 다 공백을 없애고 소문자로 맞춰서 비교 (띄어쓰기 차이 방지)
+  function normalizeForSearch(s) { return String(s || '').toLowerCase().replace(/\s+/g, ''); }
+
   function loadData(manual) {
     document.getElementById('searchBox').disabled = true;
     document.getElementById('micBtn').disabled = true;
@@ -120,8 +128,6 @@
         if (!json.success) { setStatus('❌ ' + json.message); return; }
         allData = json.data || [];
         document.getElementById('syncTime').innerText = new Date().toLocaleString('ko-KR');
-        // 🌟 [버그수정 - 2026.07] 조용히 로딩 끝나면 데이터가 실제로 들어왔는지 확인할 방법이 없어서,
-        // "검색결과 없음"이 진짜 없는 건지 아직 로딩 중이었던 건지 헷갈렸음 - 항상 몇 건 불러왔는지 보여줌
         setStatus('✅ 총 ' + allData.length + '개 품목 불러왔습니다. 검색해보세요!');
       })
       .catch(function (err) { setStatus('❌ 통신 오류: ' + err + ' (WEBAPP_URL/API_KEY를 다시 확인해주세요)'); })
@@ -149,58 +155,76 @@
     return t.trim();
   }
 
+  // 🌟 [변경 - 2026.07] 타이핑할 때도 "다시듣기" 안 눌러도 자동으로 음성이 나오게:
+  // 타이핑 멈추고 0.7초 지나면 자동으로 읽어줌 (매 글자마다 읽으면 시끄러우니 디바운스 적용)
   function onSearchInput() {
-    renderResults(document.getElementById('searchBox').value, false);
+    var query = document.getElementById('searchBox').value;
+    renderResults(query);
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(function () { speakTopResult(query); }, 700);
+  }
+  // 엔터 누르면 디바운스 기다릴 필요 없이 바로 읽어줌
+  function onSearchKeydown(e) {
+    if (e.key === 'Enter') {
+      clearTimeout(searchDebounceTimer);
+      speakTopResult(document.getElementById('searchBox').value);
+    }
   }
 
-  function renderResults(query, speak) {
+  function renderResults(query) {
     var box = document.getElementById('resultBox');
-    // 🌟 [버그수정 - 2026.07] 음성인식이 "가방정리함"을 "가방 정리함"처럼 띄어서 알아듣는 경우가 있어서,
-    // 검색어와 실제 데이터 양쪽 다 공백을 다 빼고 비교하도록 수정 (띄어쓰기 차이로 못 찾는 문제 해결)
-    var keyword = (query || '').toLowerCase().trim().replace(/\s+/g, '');
-    if (!keyword) { box.innerHTML = '<div class="empty-msg">검색어를 입력하거나 마이크를 눌러주세요</div>'; return; }
+    var keyword = normalizeForSearch(query);
+    if (!keyword) { box.innerHTML = '<div class="empty-msg">검색어를 입력하거나 마이크를 눌러주세요</div>'; window._lastMatched = []; return; }
 
     var matched = allData.filter(function (it) {
-      var hay = ((it.productName || '') + ' ' + (it.optionName || '') + ' ' + (it.skuId || '')).toLowerCase().replace(/\s+/g, '');
+      // 🌟 회사 옵션명 앞에 붙는 "B" 접두사(예: "B가방정리함 블랙")는 사용자가 말할 때 안 부르니까,
+      // 접두사 뺀 버전과 안 뺀 버전 둘 다로 비교해서 안전하게 매칭
+      var optionNoPrefix = String(it.optionName || '').replace(/^B/, '');
+      var hay = normalizeForSearch((it.productName || '') + ' ' + (it.optionName || '') + ' ' + optionNoPrefix + ' ' + (it.skuId || ''));
       return hay.indexOf(keyword) !== -1;
     });
 
+    window._lastMatched = matched;
+
     if (matched.length === 0) {
       box.innerHTML = '<div class="empty-msg">"' + query + '" 검색 결과가 없습니다.</div>';
-      if (speak) speakText('"' + query + '" 검색 결과가 없습니다.');
       return;
     }
 
     box.innerHTML = matched.slice(0, 20).map(function (it, idx) {
       var friendly = translateLocationCode(it.location);
+      var imgHtml = it.skuImageUrl
+        ? '<img src="' + it.skuImageUrl + '" class="result-img" onerror="this.style.display=\'none\'">'
+        : '';
       return '<div class="result-card">'
+        + imgHtml
         + '<div class="result-name">' + (it.productName || '') + (it.optionName ? ' · ' + it.optionName : '') + '</div>'
         + '<div class="result-location">📍 ' + friendly + '</div>'
         + '<div class="result-qty">재고: <b>' + it.currentStock + '개</b></div>'
         + '<button class="replay-btn" onclick="speakOne(' + idx + ')">🔊 다시 듣기</button>'
         + '</div>';
     }).join('');
+  }
 
-    window._lastMatched = matched;
-
-    // 🌟 [변경 - 2026.07] 여러 건이 매칭돼도 "몇 건 있습니다, 화면 보세요"로 끝내지 않고,
-    // 맨 위(가장 관련도 높은) 결과를 바로 읽어준다 - 옵션명까지 안 부르고 상품명만 말해도
-    // 일단 첫 번째 결과를 바로 들을 수 있게.
-    if (speak) {
-      if (matched.length === 1) {
-        speakOneItem(matched[0]);
-      } else {
-        speakText('총 ' + matched.length + '건 중 첫번째 결과입니다. ' + itemSpeechText(matched[0]));
-      }
+  // 🌟 검색된 목록의 맨 위(첫 번째) 결과를 바로 읽어줌 - 여러 건이어도 무조건 첫 번째부터 알려줌
+  function speakTopResult(query) {
+    var matched = window._lastMatched || [];
+    if (matched.length === 0) {
+      if (normalizeForSearch(query)) speakText('"' + query + '" 검색 결과가 없습니다.');
+      return;
     }
+    speakOneItem(matched[0]);
   }
 
   function speakOne(idx) {
     if (window._lastMatched && window._lastMatched[idx]) speakOneItem(window._lastMatched[idx]);
   }
 
+  // 🌟 [변경 - 2026.07] "위치만 알려주면 되는데 상품명·옵션명·재고까지 다 말하고 나서야 위치가 나온다"는
+  // 피드백 반영 - 상품명은 어떤 걸 찾았는지 확인 차원에서 짧게만 말하고, 바로 위치를 말한다.
+  // 옵션명/재고는 화면 카드에 이미 보이니 음성에서는 생략해서 훨씬 짧고 빠르게 들리게 함.
   function itemSpeechText(it) {
-    return (it.productName || '') + (it.optionName ? ' ' + it.optionName : '') + ', 재고 ' + it.currentStock + '개, 위치는 ' + translateLocationCode(it.location) + '입니다.';
+    return (it.productName || '') + ' 위치는 ' + translateLocationCode(it.location) + '입니다.';
   }
 
   function speakOneItem(it) {
@@ -232,7 +256,8 @@
       var cleaned = cleanVoiceQuery(raw);
       document.getElementById('searchBox').value = cleaned;
       setStatus('"' + raw + '" 라고 들었어요 → "' + cleaned + '"로 검색합니다');
-      renderResults(cleaned, true);
+      renderResults(cleaned);
+      speakTopResult(cleaned);
     };
     recognition.onerror = function (event) {
       btn.classList.remove('listening');

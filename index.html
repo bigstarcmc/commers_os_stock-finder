@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>재고 위치 찾기</title>
 <style>
   * { box-sizing: border-box; }
@@ -100,6 +103,45 @@
   // 🌟 창고위치 코드 규칙: "XX#-Y##" → "OO#차 Y동 층 호"
   // 새 창고 접두사가 생기면 아래 맵에 한 줄만 추가하면 됩니다.
   const WAREHOUSE_PREFIX_MAP = { 'TS': '태성', 'WH': '창고', 'BX': '박스' };
+
+  function setStatus(msg) { document.getElementById('status').innerText = msg; }
+
+  // 🌟 [버그수정 - 2026.07] 검색어/데이터 양쪽 다 공백을 없애고 소문자로 맞춰서 비교 (띄어쓰기 차이 방지)
+  function normalizeForSearch(s) { return String(s || '').toLowerCase().replace(/\s+/g, ''); }
+
+  // 🌟 [신규 - 2026.07] 숫자를 그대로 두면 TTS가 "11"을 "열한"(고유어)으로 읽거나 "4층"을
+  // "4번 지층"처럼 이상하게 읽는 문제가 있어서, 아예 한글 독음으로 바꿔서 읽어준다
+  // (화면 표시는 그대로 숫자로 - 눈으로 볼 땐 숫자가 더 읽기 편하니까, 읽어줄 때만 이렇게 씀)
+  function numberToSinoKorean(n) {
+    n = parseInt(n, 10);
+    if (isNaN(n)) return String(n);
+    if (n === 0) return '영';
+    var units4 = ['', '만', '억', '조'];
+    var digitNames = ['', '일', '이', '삼', '사', '오', '육', '칠', '팔', '구'];
+    var placeNames = ['', '십', '백', '천'];
+    var result = '', groupIndex = 0;
+    while (n > 0) {
+      var group = n % 10000;
+      n = Math.floor(n / 10000);
+      if (group > 0) {
+        var g = group, placeIdx = 0, parts = [];
+        while (g > 0) {
+          var digit = g % 10;
+          if (digit > 0) {
+            var digitName = (digit === 1 && placeIdx > 0) ? '' : digitNames[digit];
+            parts.unshift(digitName + placeNames[placeIdx]);
+          }
+          g = Math.floor(g / 10);
+          placeIdx++;
+        }
+        result = parts.join('') + units4[groupIndex] + result;
+      }
+      groupIndex++;
+    }
+    return result;
+  }
+
+  // 🌟 화면 표시용(숫자 그대로) - 눈으로 읽을 땐 숫자가 자연스러움
   function translateLocationCode(code) {
     if (!code) return '위치 미지정';
     return String(code).split(',').map(function (part) {
@@ -113,10 +155,19 @@
     }).join(', ');
   }
 
-  function setStatus(msg) { document.getElementById('status').innerText = msg; }
-
-  // 🌟 [버그수정 - 2026.07] 검색어/데이터 양쪽 다 공백을 없애고 소문자로 맞춰서 비교 (띄어쓰기 차이 방지)
-  function normalizeForSearch(s) { return String(s || '').toLowerCase().replace(/\s+/g, ''); }
+  // 🌟 음성 안내용(한글 독음) - "십일차 A동 사층 일호"처럼 읽어야 정확한 발음이 나옴
+  function translateLocationForSpeech(code) {
+    if (!code) return '위치 미지정';
+    return String(code).split(',').map(function (part) {
+      part = part.trim();
+      var m = part.match(/^([A-Za-z]{2})(\d+)-([A-Za-z])(\d+)(\d{2})$/);
+      if (!m) return part;
+      var prefixName = WAREHOUSE_PREFIX_MAP[m[1].toUpperCase()] || m[1].toUpperCase();
+      var order = parseInt(m[2], 10), building = m[3].toUpperCase();
+      var floor = parseInt(m[4], 10), unit = parseInt(m[5], 10);
+      return prefixName + numberToSinoKorean(order) + '차 ' + building + '동 ' + numberToSinoKorean(floor) + '층 ' + numberToSinoKorean(unit) + '호';
+    }).join(', ');
+  }
 
   function loadData(manual) {
     document.getElementById('searchBox').disabled = true;
@@ -224,7 +275,7 @@
   // 피드백 반영 - 상품명은 어떤 걸 찾았는지 확인 차원에서 짧게만 말하고, 바로 위치를 말한다.
   // 옵션명/재고는 화면 카드에 이미 보이니 음성에서는 생략해서 훨씬 짧고 빠르게 들리게 함.
   function itemSpeechText(it) {
-    return (it.productName || '') + ' 위치는 ' + translateLocationCode(it.location) + '입니다.';
+    return (it.productName || '') + ' 위치는 ' + translateLocationForSpeech(it.location) + '입니다.';
   }
 
   function speakOneItem(it) {

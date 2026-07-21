@@ -111,6 +111,8 @@
   function setStatus(msg) { document.getElementById('status').innerText = msg; }
 
   function loadData(manual) {
+    document.getElementById('searchBox').disabled = true;
+    document.getElementById('micBtn').disabled = true;
     setStatus('⏳ 최신 재고 데이터를 불러오는 중...');
     fetch(WEBAPP_URL + '?action=exportSkuMaster&key=' + encodeURIComponent(API_KEY))
       .then(function (res) { return res.json(); })
@@ -118,9 +120,15 @@
         if (!json.success) { setStatus('❌ ' + json.message); return; }
         allData = json.data || [];
         document.getElementById('syncTime').innerText = new Date().toLocaleString('ko-KR');
-        setStatus(manual ? '✅ 최신 데이터로 갱신했습니다 (' + allData.length + '개 품목)' : '');
+        // 🌟 [버그수정 - 2026.07] 조용히 로딩 끝나면 데이터가 실제로 들어왔는지 확인할 방법이 없어서,
+        // "검색결과 없음"이 진짜 없는 건지 아직 로딩 중이었던 건지 헷갈렸음 - 항상 몇 건 불러왔는지 보여줌
+        setStatus('✅ 총 ' + allData.length + '개 품목 불러왔습니다. 검색해보세요!');
       })
-      .catch(function (err) { setStatus('❌ 통신 오류: ' + err); });
+      .catch(function (err) { setStatus('❌ 통신 오류: ' + err + ' (WEBAPP_URL/API_KEY를 다시 확인해주세요)'); })
+      .finally(function () {
+        document.getElementById('searchBox').disabled = false;
+        document.getElementById('micBtn').disabled = false;
+      });
   }
 
   // 🌟 "핸드폰스트랩 어디있어?" 같은 흔한 꼬리말을 잘라내고 핵심 검색어만 뽑아냄
@@ -147,11 +155,13 @@
 
   function renderResults(query, speak) {
     var box = document.getElementById('resultBox');
-    var keyword = (query || '').toLowerCase().trim();
+    // 🌟 [버그수정 - 2026.07] 음성인식이 "가방정리함"을 "가방 정리함"처럼 띄어서 알아듣는 경우가 있어서,
+    // 검색어와 실제 데이터 양쪽 다 공백을 다 빼고 비교하도록 수정 (띄어쓰기 차이로 못 찾는 문제 해결)
+    var keyword = (query || '').toLowerCase().trim().replace(/\s+/g, '');
     if (!keyword) { box.innerHTML = '<div class="empty-msg">검색어를 입력하거나 마이크를 눌러주세요</div>'; return; }
 
     var matched = allData.filter(function (it) {
-      var hay = ((it.productName || '') + ' ' + (it.optionName || '') + ' ' + (it.skuId || '')).toLowerCase();
+      var hay = ((it.productName || '') + ' ' + (it.optionName || '') + ' ' + (it.skuId || '')).toLowerCase().replace(/\s+/g, '');
       return hay.indexOf(keyword) !== -1;
     });
 
@@ -173,11 +183,14 @@
 
     window._lastMatched = matched;
 
+    // 🌟 [변경 - 2026.07] 여러 건이 매칭돼도 "몇 건 있습니다, 화면 보세요"로 끝내지 않고,
+    // 맨 위(가장 관련도 높은) 결과를 바로 읽어준다 - 옵션명까지 안 부르고 상품명만 말해도
+    // 일단 첫 번째 결과를 바로 들을 수 있게.
     if (speak) {
       if (matched.length === 1) {
         speakOneItem(matched[0]);
       } else {
-        speakText(query + ' 검색 결과 ' + matched.length + '건이 있습니다. 화면에서 확인해주세요.');
+        speakText('총 ' + matched.length + '건 중 첫번째 결과입니다. ' + itemSpeechText(matched[0]));
       }
     }
   }
@@ -186,8 +199,12 @@
     if (window._lastMatched && window._lastMatched[idx]) speakOneItem(window._lastMatched[idx]);
   }
 
+  function itemSpeechText(it) {
+    return (it.productName || '') + (it.optionName ? ' ' + it.optionName : '') + ', 재고 ' + it.currentStock + '개, 위치는 ' + translateLocationCode(it.location) + '입니다.';
+  }
+
   function speakOneItem(it) {
-    speakText((it.productName || '') + (it.optionName ? ' ' + it.optionName : '') + ', 재고 ' + it.currentStock + '개, 위치는 ' + translateLocationCode(it.location) + '입니다.');
+    speakText(itemSpeechText(it));
   }
 
   function speakText(text) {

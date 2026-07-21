@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>재고 위치 찾기</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px;
+    font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", sans-serif;
+    background: #f0f4f8;
+    color: #1a202c;
+  }
+  h1 {
+    font-size: 22px; text-align: center; margin: 8px 0 20px 0; color: #2b6cb0;
+  }
+  .search-row {
+    display: flex; gap: 8px; margin-bottom: 14px;
+  }
+  #searchBox {
+    flex: 1; font-size: 20px; padding: 14px 16px;
+    border: 2px solid #cbd5e0; border-radius: 12px;
+  }
+  #micBtn {
+    width: 62px; height: 62px; font-size: 28px;
+    border: none; border-radius: 50%;
+    background: #3182ce; color: #fff; cursor: pointer;
+    flex-shrink: 0;
+  }
+  #micBtn.listening {
+    background: #e53e3e;
+    animation: pulse 1s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(229,62,62,0.5); }
+    70% { box-shadow: 0 0 0 16px rgba(229,62,62,0); }
+    100% { box-shadow: 0 0 0 0 rgba(229,62,62,0); }
+  }
+  #status {
+    text-align: center; font-size: 14px; color: #718096; margin-bottom: 14px; min-height: 20px;
+  }
+  #resultBox { display: flex; flex-direction: column; gap: 12px; }
+  .result-card {
+    background: #fff; border-radius: 14px; padding: 18px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    border-left: 8px solid #3182ce;
+  }
+  .result-name { font-size: 19px; font-weight: bold; margin-bottom: 8px; }
+  .result-location {
+    font-size: 26px; font-weight: 900; color: #2b6cb0; margin-bottom: 6px;
+  }
+  .result-qty { font-size: 15px; color: #4a5568; }
+  .result-qty b { font-size: 18px; color: #1a202c; }
+  .replay-btn {
+    margin-top: 10px; font-size: 14px; padding: 8px 14px;
+    border: 1px solid #cbd5e0; border-radius: 8px; background: #f7fafc; cursor: pointer;
+  }
+  .empty-msg { text-align: center; color: #a0aec0; font-size: 16px; padding: 30px 0; }
+  #syncRow {
+    text-align: center; margin-top: 24px; font-size: 12px; color: #a0aec0;
+  }
+  #syncBtn {
+    font-size: 12px; padding: 6px 12px; border-radius: 8px; border: 1px solid #cbd5e0; background: #fff; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+  <h1>📦 재고 위치 찾기</h1>
+
+  <div class="search-row">
+    <input type="text" id="searchBox" placeholder="상품명을 입력하거나 마이크를 눌러 말하세요" oninput="onSearchInput()">
+    <button id="micBtn" onclick="startVoiceSearch()">🎤</button>
+  </div>
+  <div id="status"></div>
+  <div id="resultBox"><div class="empty-msg">검색어를 입력하거나 마이크를 눌러주세요</div></div>
+
+  <div id="syncRow">
+    마지막 동기화: <span id="syncTime">-</span>
+    &nbsp;<button id="syncBtn" onclick="loadData(true)">🔄 최신자료 새로고침</button>
+  </div>
+
+<script>
+  // ══════════════════════════════════════════════════════════════
+  // ⚠️ 여기 두 줄만 본인 환경에 맞게 채워주세요
+  // WEBAPP_URL: Apps Script 배포 관리에서 확인한 웹앱 주소 (.../exec 로 끝나는 것)
+  // API_KEY: Config.gs의 API_EXPORT_KEY와 동일한 값
+  // ══════════════════════════════════════════════════════════════
+  const WEBAPP_URL = "https://script.google.com/macros/s/AKfycbxW_ymW5HsG_O9dD8sFuAR3FgOe3uy2lpgz4aSBIvotVQ4Wd019YC8ZMKqqrcF0TKRQ1w/exec";
+  const API_KEY = "dlwlsgksdmlworhvmfhrmfoa!!!";
+
+  let allData = [];
+
+  // 🌟 창고위치 코드 규칙: "XX#-Y##" → "OO#차 Y동 층 호"
+  // 새 창고 접두사가 생기면 아래 맵에 한 줄만 추가하면 됩니다.
+  const WAREHOUSE_PREFIX_MAP = { 'TS': '태성', 'WH': '창고', 'BX': '박스' };
+  function translateLocationCode(code) {
+    if (!code) return '위치 미지정';
+    return String(code).split(',').map(function (part) {
+      part = part.trim();
+      var m = part.match(/^([A-Za-z]{2})(\d+)-([A-Za-z])(\d+)(\d{2})$/);
+      if (!m) return part;
+      var prefixName = WAREHOUSE_PREFIX_MAP[m[1].toUpperCase()] || m[1].toUpperCase();
+      var order = m[2], building = m[3].toUpperCase();
+      var floor = parseInt(m[4], 10), unit = parseInt(m[5], 10);
+      return prefixName + order + '차 ' + building + '동 ' + floor + '층 ' + unit + '호';
+    }).join(', ');
+  }
+
+  function setStatus(msg) { document.getElementById('status').innerText = msg; }
+
+  function loadData(manual) {
+    setStatus('⏳ 최신 재고 데이터를 불러오는 중...');
+    fetch(WEBAPP_URL + '?action=exportSkuMaster&key=' + encodeURIComponent(API_KEY))
+      .then(function (res) { return res.json(); })
+      .then(function (json) {
+        if (!json.success) { setStatus('❌ ' + json.message); return; }
+        allData = json.data || [];
+        document.getElementById('syncTime').innerText = new Date().toLocaleString('ko-KR');
+        setStatus(manual ? '✅ 최신 데이터로 갱신했습니다 (' + allData.length + '개 품목)' : '');
+      })
+      .catch(function (err) { setStatus('❌ 통신 오류: ' + err); });
+  }
+
+  // 🌟 "핸드폰스트랩 어디있어?" 같은 흔한 꼬리말을 잘라내고 핵심 검색어만 뽑아냄
+  function cleanVoiceQuery(text) {
+    var t = String(text || '').trim();
+    var patterns = [
+      /어디\s*있어\??$/, /어딨어\??$/, /어디\s*있나\??$/, /어디야\??$/, /어디에요\??$/,
+      /위치\s*(가|는)?\s*(어디)?\??$/, /찾아줘\??$/, /알려줘\??$/, /어디\??$/, /\?+$/
+    ];
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (var i = 0; i < patterns.length; i++) {
+        var newT = t.replace(patterns[i], '').trim();
+        if (newT !== t) { t = newT; changed = true; }
+      }
+    }
+    return t.trim();
+  }
+
+  function onSearchInput() {
+    renderResults(document.getElementById('searchBox').value, false);
+  }
+
+  function renderResults(query, speak) {
+    var box = document.getElementById('resultBox');
+    var keyword = (query || '').toLowerCase().trim();
+    if (!keyword) { box.innerHTML = '<div class="empty-msg">검색어를 입력하거나 마이크를 눌러주세요</div>'; return; }
+
+    var matched = allData.filter(function (it) {
+      var hay = ((it.productName || '') + ' ' + (it.optionName || '') + ' ' + (it.skuId || '')).toLowerCase();
+      return hay.indexOf(keyword) !== -1;
+    });
+
+    if (matched.length === 0) {
+      box.innerHTML = '<div class="empty-msg">"' + query + '" 검색 결과가 없습니다.</div>';
+      if (speak) speakText('"' + query + '" 검색 결과가 없습니다.');
+      return;
+    }
+
+    box.innerHTML = matched.slice(0, 20).map(function (it, idx) {
+      var friendly = translateLocationCode(it.location);
+      return '<div class="result-card">'
+        + '<div class="result-name">' + (it.productName || '') + (it.optionName ? ' · ' + it.optionName : '') + '</div>'
+        + '<div class="result-location">📍 ' + friendly + '</div>'
+        + '<div class="result-qty">재고: <b>' + it.currentStock + '개</b></div>'
+        + '<button class="replay-btn" onclick="speakOne(' + idx + ')">🔊 다시 듣기</button>'
+        + '</div>';
+    }).join('');
+
+    window._lastMatched = matched;
+
+    if (speak) {
+      if (matched.length === 1) {
+        speakOneItem(matched[0]);
+      } else {
+        speakText(query + ' 검색 결과 ' + matched.length + '건이 있습니다. 화면에서 확인해주세요.');
+      }
+    }
+  }
+
+  function speakOne(idx) {
+    if (window._lastMatched && window._lastMatched[idx]) speakOneItem(window._lastMatched[idx]);
+  }
+
+  function speakOneItem(it) {
+    speakText((it.productName || '') + (it.optionName ? ' ' + it.optionName : '') + ', 재고 ' + it.currentStock + '개, 위치는 ' + translateLocationCode(it.location) + '입니다.');
+  }
+
+  function speakText(text) {
+    if (!('speechSynthesis' in window)) return;
+    var u = new SpeechSynthesisUtterance(text);
+    u.lang = 'ko-KR';
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  }
+
+  function startVoiceSearch() {
+    var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRec) { alert('이 브라우저는 음성 인식을 지원하지 않습니다. 크롬을 이용해주세요.'); return; }
+    var recognition = new SpeechRec();
+    recognition.lang = 'ko-KR';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    var btn = document.getElementById('micBtn');
+    btn.classList.add('listening');
+    setStatus('🎙️ 듣고 있습니다...');
+
+    recognition.onresult = function (event) {
+      var raw = event.results[0][0].transcript;
+      var cleaned = cleanVoiceQuery(raw);
+      document.getElementById('searchBox').value = cleaned;
+      setStatus('"' + raw + '" 라고 들었어요 → "' + cleaned + '"로 검색합니다');
+      renderResults(cleaned, true);
+    };
+    recognition.onerror = function (event) {
+      btn.classList.remove('listening');
+      if (event.error === 'not-allowed') setStatus('❌ 마이크 권한이 막혀있습니다. 주소창 자물쇠 아이콘에서 마이크를 허용해주세요.');
+      else if (event.error !== 'no-speech') setStatus('❌ 음성 인식 오류: ' + event.error);
+      else setStatus('');
+    };
+    recognition.onend = function () { btn.classList.remove('listening'); };
+    recognition.start();
+  }
+
+  // 페이지 열리자마자 자동으로 최신 데이터 불러오기
+  loadData(false);
+</script>
+
+</body>
+</html>

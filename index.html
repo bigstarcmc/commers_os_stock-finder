@@ -245,7 +245,7 @@
     box.innerHTML = matched.slice(0, 20).map(function (it, idx) {
       var friendly = translateLocationCode(it.location);
       var imgHtml = it.skuImageUrl
-        ? '<img src="' + it.skuImageUrl + '" class="result-img" onerror="this.style.display=\'none\'">'
+        ? '<img src="' + it.skuImageUrl + '" class="result-img" referrerpolicy="no-referrer" loading="lazy" onerror="this.style.display=\'none\'">'
         : '';
       return '<div class="result-card">'
         + imgHtml

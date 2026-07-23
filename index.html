@@ -245,7 +245,7 @@
       // 🌟 회사 옵션명 앞에 붙는 "B" 접두사(예: "B가방정리함 블랙")는 사용자가 말할 때 안 부르니까,
       // 접두사 뺀 버전과 안 뺀 버전 둘 다로 비교해서 안전하게 매칭
       var optionNoPrefix = String(it.optionName || '').replace(/^B/, '');
-      var hay = normalizeForSearch((it.productName || '') + ' ' + (it.optionName || '') + ' ' + optionNoPrefix + ' ' + (it.skuId || '') + ' ' + (it.searchAliases || ''));
+      var hay = normalizeForSearch((it.productName || '') + ' ' + (it.optionName || '') + ' ' + optionNoPrefix + ' ' + (it.skuId || '') + ' ' + (it.searchAliases || '') + ' ' + (it.keywords || ''));
       return hay.indexOf(keyword) !== -1;
     });
 

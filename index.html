@@ -7,6 +7,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>재고 위치 찾기</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
   * { box-sizing: border-box; }
   body {
@@ -70,6 +71,32 @@
   #syncBtn {
     font-size: 12px; padding: 6px 12px; border-radius: 8px; border: 1px solid #cbd5e0; background: #fff; cursor: pointer;
   }
+
+  /* 🌟 [신규 - 2026.07] 송장 스캔(OCR) 관련 스타일 */
+  #scanBtn {
+    width: 62px; height: 62px; font-size: 26px;
+    border: none; border-radius: 50%;
+    background: #805ad5; color: #fff; cursor: pointer;
+    flex-shrink: 0;
+  }
+  #scanModal {
+    display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.92); z-index: 999; flex-direction: column; align-items: center; justify-content: center;
+  }
+  #scanModal.open { display: flex; }
+  #scanVideo, #scanCanvasWrap { max-width: 95vw; max-height: 70vh; }
+  #scanCanvasWrap { position: relative; touch-action: none; }
+  #scanCanvas { max-width: 95vw; max-height: 70vh; display: block; }
+  #scanSelBox {
+    position: absolute; border: 3px solid #f6e05e; background: rgba(246,224,94,0.2); display: none;
+    box-shadow: 0 0 0 2000px rgba(0,0,0,0.4);
+  }
+  .scan-controls { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; justify-content: center; }
+  .scan-btn { font-size: 15px; padding: 12px 20px; border-radius: 10px; border: none; cursor: pointer; font-weight: bold; }
+  .scan-btn.primary { background: #f6e05e; color: #1a202c; }
+  .scan-btn.secondary { background: #4a5568; color: #fff; }
+  #scanHint { color: #fff; font-size: 13px; text-align: center; margin-bottom: 10px; padding: 0 20px; }
+  #scanStatus { color: #f6e05e; font-size: 14px; text-align: center; margin-top: 10px; min-height: 20px; }
 </style>
 </head>
 <body>
@@ -79,6 +106,7 @@
   <div class="search-row">
     <input type="text" id="searchBox" placeholder="상품명을 입력하거나 마이크를 눌러 말하세요" oninput="onSearchInput()" onkeydown="onSearchKeydown(event)">
     <button id="micBtn" onclick="startVoiceSearch()">🎤</button>
+    <button id="scanBtn" onclick="openScanModal()" title="송장을 카메라로 찍어서 상품명을 인식합니다">📷</button>
   </div>
   <div id="status"></div>
   <div id="resultBox"><div class="empty-msg">검색어를 입력하거나 마이크를 눌러주세요</div></div>
@@ -87,6 +115,24 @@
     마지막 동기화: <span id="syncTime">-</span>
     &nbsp;<button id="syncBtn" onclick="loadData(true)">🔄 최신자료 새로고침</button>
   </div>
+
+  <!-- 🌟 [신규 - 2026.07] 송장 스캔(카메라 촬영 → 영역 지정 → 문자인식) 모달 -->
+  <div id="scanModal">
+    <div id="scanHint">① 송장의 품명 부분이 잘 보이게 촬영하세요</div>
+    <video id="scanVideo" autoplay playsinline></video>
+    <div id="scanCanvasWrap" style="display:none;">
+      <canvas id="scanCanvas"></canvas>
+      <div id="scanSelBox"></div>
+    </div>
+    <div id="scanStatus"></div>
+    <div class="scan-controls">
+      <button class="scan-btn primary" id="scanCaptureBtn" onclick="captureInvoiceFrame()">📸 촬영</button>
+      <button class="scan-btn primary" id="scanRecognizeBtn" style="display:none;" onclick="recognizeCroppedRegion()">✅ 이 영역 인식하기</button>
+      <button class="scan-btn secondary" id="scanRetakeBtn" style="display:none;" onclick="retakeInvoiceFrame()">🔄 다시 찍기</button>
+      <button class="scan-btn secondary" onclick="closeScanModal()">닫기</button>
+    </div>
+  </div>
+
 
 <script>
   // ══════════════════════════════════════════════════════════════
@@ -250,18 +296,21 @@
     });
 
     window._lastMatched = matched;
+    renderMatchedCards(matched, '"' + query + '" 검색 결과가 없습니다.');
+  }
 
+  // 🌟 [신규 - 2026.07] 카드 렌더링 부분을 공용 함수로 분리 - 일반 검색과 송장스캔(여러 상품 동시검색) 둘 다 재사용
+  function renderMatchedCards(matched, emptyMsg) {
+    var box = document.getElementById('resultBox');
     if (matched.length === 0) {
-      box.innerHTML = '<div class="empty-msg">"' + query + '" 검색 결과가 없습니다.</div>';
+      box.innerHTML = '<div class="empty-msg">' + emptyMsg + '</div>';
       return;
     }
-
     box.innerHTML = matched.slice(0, 20).map(function (it, idx) {
       var friendly = translateLocationCode(it.location);
       var imgHtml = it.skuImageUrl
         ? '<img src="' + it.skuImageUrl + '" class="result-img" referrerpolicy="no-referrer" loading="lazy" onerror="this.style.display=\'none\'">'
         : '';
-      // 🌟 [신규 - 2026.07] 저장위치가 있는 품목만 보조로 한 줄 더 보여줌 (없으면 아예 안 나와서 지저분하지 않음)
       var bulkHtml = it.bulkLocation ? '<div class="result-qty">📦 저장위치: ' + translateLocationCode(it.bulkLocation) + '</div>' : '';
       return '<div class="result-card">'
         + imgHtml
@@ -342,6 +391,157 @@
     };
     recognition.onend = function () { btn.classList.remove('listening'); };
     recognition.start();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🌟 [신규 - 2026.07] 송장 스캔 - 카메라로 찍고, 상품명 부분을 손가락으로 드래그해서 지정하면
+  // 그 영역만 문자인식(OCR)해서 검색까지 한 번에 해준다 (음성보다 정확도가 훨씬 좋음).
+  // ═══════════════════════════════════════════════════════════
+  let scanStream = null;
+  let scanSelecting = false, scanStartX = 0, scanStartY = 0, scanRect = null;
+
+  function openScanModal() {
+    document.getElementById('scanModal').classList.add('open');
+    document.getElementById('scanHint').innerText = '① 송장의 품명 부분이 잘 보이게 촬영하세요';
+    document.getElementById('scanVideo').style.display = 'block';
+    document.getElementById('scanCanvasWrap').style.display = 'none';
+    document.getElementById('scanCaptureBtn').style.display = 'inline-block';
+    document.getElementById('scanRecognizeBtn').style.display = 'none';
+    document.getElementById('scanRetakeBtn').style.display = 'none';
+    document.getElementById('scanStatus').innerText = '';
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(function (stream) {
+        scanStream = stream;
+        document.getElementById('scanVideo').srcObject = stream;
+      })
+      .catch(function (err) {
+        document.getElementById('scanStatus').innerText = '❌ 카메라를 열 수 없습니다: ' + err.message;
+      });
+  }
+
+  function closeScanModal() {
+    document.getElementById('scanModal').classList.remove('open');
+    if (scanStream) { scanStream.getTracks().forEach(function (t) { t.stop(); }); scanStream = null; }
+  }
+
+  function captureInvoiceFrame() {
+    var video = document.getElementById('scanVideo');
+    var canvas = document.getElementById('scanCanvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    if (scanStream) { scanStream.getTracks().forEach(function (t) { t.stop(); }); scanStream = null; }
+    video.style.display = 'none';
+    document.getElementById('scanCanvasWrap').style.display = 'block';
+    document.getElementById('scanCaptureBtn').style.display = 'none';
+    document.getElementById('scanRecognizeBtn').style.display = 'inline-block';
+    document.getElementById('scanRetakeBtn').style.display = 'inline-block';
+    document.getElementById('scanHint').innerText = '② 상품명이 적힌 부분을 손가락(또는 마우스)으로 드래그해서 네모로 선택하세요';
+    scanRect = null;
+    document.getElementById('scanSelBox').style.display = 'none';
+    setupScanSelection();
+  }
+
+  function retakeInvoiceFrame() { openScanModal(); }
+
+  function setupScanSelection() {
+    var wrap = document.getElementById('scanCanvasWrap');
+    var canvas = document.getElementById('scanCanvas');
+    var selBox = document.getElementById('scanSelBox');
+
+    function getPos(e) {
+      var rect = canvas.getBoundingClientRect();
+      var clientX = (e.touches ? e.touches[0].clientX : e.clientX);
+      var clientY = (e.touches ? e.touches[0].clientY : e.clientY);
+      return { x: clientX - rect.left, y: clientY - rect.top };
+    }
+    function onStart(e) {
+      e.preventDefault();
+      var p = getPos(e);
+      scanSelecting = true; scanStartX = p.x; scanStartY = p.y;
+      selBox.style.left = p.x + 'px'; selBox.style.top = p.y + 'px';
+      selBox.style.width = '0px'; selBox.style.height = '0px';
+      selBox.style.display = 'block';
+    }
+    function onMove(e) {
+      if (!scanSelecting) return;
+      e.preventDefault();
+      var p = getPos(e);
+      var x = Math.min(p.x, scanStartX), y = Math.min(p.y, scanStartY);
+      var w = Math.abs(p.x - scanStartX), h = Math.abs(p.y - scanStartY);
+      selBox.style.left = x + 'px'; selBox.style.top = y + 'px';
+      selBox.style.width = w + 'px'; selBox.style.height = h + 'px';
+    }
+    function onEnd() {
+      if (!scanSelecting) return;
+      scanSelecting = false;
+      var rect = canvas.getBoundingClientRect();
+      var scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
+      var left = parseFloat(selBox.style.left) || 0, top = parseFloat(selBox.style.top) || 0;
+      var w = parseFloat(selBox.style.width) || 0, h = parseFloat(selBox.style.height) || 0;
+      scanRect = { x: left * scaleX, y: top * scaleY, w: w * scaleX, h: h * scaleY };
+    }
+    wrap.onmousedown = onStart; wrap.onmousemove = onMove; wrap.onmouseup = onEnd;
+    wrap.ontouchstart = onStart; wrap.ontouchmove = onMove; wrap.ontouchend = onEnd;
+  }
+
+  function recognizeCroppedRegion() {
+    var canvas = document.getElementById('scanCanvas');
+    var status = document.getElementById('scanStatus');
+    var srcRect = scanRect;
+    if (!srcRect || srcRect.w < 10 || srcRect.h < 10) srcRect = { x: 0, y: 0, w: canvas.width, h: canvas.height };
+
+    var cropCanvas = document.createElement('canvas');
+    cropCanvas.width = srcRect.w; cropCanvas.height = srcRect.h;
+    cropCanvas.getContext('2d').drawImage(canvas, srcRect.x, srcRect.y, srcRect.w, srcRect.h, 0, 0, srcRect.w, srcRect.h);
+
+    status.innerText = '⏳ 문자를 인식하는 중입니다... (처음엔 조금 걸릴 수 있어요)';
+    Tesseract.recognize(cropCanvas, 'kor', {
+      logger: function (m) { if (m.status === 'recognizing text') status.innerText = '⏳ 인식 중... ' + Math.round(m.progress * 100) + '%'; }
+    }).then(function (result) {
+      status.innerText = '✅ 인식 완료';
+      processInvoiceOcrText(result.data.text || '');
+    }).catch(function (err) {
+      status.innerText = '❌ 인식 실패: ' + err.message;
+    });
+  }
+
+  // 🌟 인식된 텍스트에서 상품명만 추출 - 송장 품명란은 보통 "상품명/수량" 형태라 "/" 앞부분만 사용.
+  // 여러 줄이 인식되면 줄마다 다 상품명 후보로 보고, 전부 검색해서 결과를 합쳐서 보여준다.
+  function processInvoiceOcrText(rawText) {
+    var lines = rawText.split(/\n+/).map(function (l) { return l.trim(); }).filter(function (l) { return l.length > 1; });
+    var candidates = lines.map(function (l) { return l.split('/')[0].trim(); }).filter(function (c) { return c; });
+
+    if (candidates.length === 0) {
+      document.getElementById('scanStatus').innerText = '❌ 인식된 글자가 없습니다. 다시 영역을 지정해주세요.';
+      return;
+    }
+    closeScanModal();
+    searchMultipleQueries(candidates);
+  }
+
+  // 🌟 여러 상품명 후보를 한 번에 검색해서 결과를 합쳐 보여줌 (중복 SKU는 한 번만)
+  function searchMultipleQueries(queries) {
+    var seenIds = {};
+    var combined = [];
+    queries.forEach(function (q) {
+      var keyword = normalizeForSearch(q);
+      if (!keyword) return;
+      allData.forEach(function (it) {
+        if (seenIds[it.skuId]) return;
+        var optionNoPrefix = String(it.optionName || '').replace(/^B/, '');
+        var hay = normalizeForSearch((it.productName || '') + ' ' + (it.optionName || '') + ' ' + optionNoPrefix + ' ' + (it.skuId || '') + ' ' + (it.searchAliases || '') + ' ' + (it.keywords || ''));
+        if (hay.indexOf(keyword) !== -1) { seenIds[it.skuId] = true; combined.push(it); }
+      });
+    });
+
+    document.getElementById('searchBox').value = queries.join(', ');
+    window._lastMatched = combined;
+    setStatus('📷 송장에서 "' + queries.join('", "') + '" 인식 → 총 ' + combined.length + '건 찾음');
+    renderMatchedCards(combined, '인식된 상품명으로 찾은 결과가 없습니다.');
+    if (combined.length > 0) speakOneItem(combined[0]);
+    else speakText('인식된 상품을 찾지 못했습니다.');
   }
 
   // 페이지 열리자마자 자동으로 최신 데이터 불러오기

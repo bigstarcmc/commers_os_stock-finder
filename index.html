@@ -100,23 +100,69 @@
   .scan-btn.secondary { background: #4a5568; color: #fff; }
   #scanHint { color: #fff; font-size: 13px; text-align: center; margin-bottom: 10px; padding: 0 20px; }
   #scanStatus { color: #f6e05e; font-size: 14px; text-align: center; margin-top: 10px; min-height: 20px; }
+
+  /* 🌟 [신규 - 2026.07] 상단 탭 전환 + 오늘의 피킹리스트 스타일 */
+  .main-tab-row { display: flex; gap: 8px; margin-bottom: 16px; }
+  .main-tab-btn {
+    flex: 1; padding: 14px; font-size: 15px; font-weight: bold;
+    border: 2px solid #2b6cb0; border-radius: 12px; background: #fff; color: #2b6cb0; cursor: pointer;
+  }
+  .main-tab-btn.active { background: #2b6cb0; color: #fff; }
+  .pick-controls {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    background: #fff; border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px;
+  }
+  .pick-controls input[type=number] { padding: 6px; border: 1px solid #cbd5e0; border-radius: 6px; }
+  .pick-refresh-btn { padding: 8px 14px; border-radius: 8px; border: 1px solid #cbd5e0; background: #f7fafc; cursor: pointer; }
+  .pick-batch-card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+  .pick-batch-head { font-size: 15px; font-weight: bold; color: #2b6cb0; margin-bottom: 10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; }
+  .pick-view-toggle { display: flex; gap: 6px; margin-bottom: 10px; }
+  .pick-view-toggle button { flex:1; padding: 8px; font-size: 12px; font-weight: bold; border: 1px solid #cbd5e0; border-radius: 8px; background: #fff; color: #4a5568; cursor: pointer; }
+  .pick-view-toggle button.active { background: #805ad5; color: #fff; border-color: #805ad5; }
+  .pick-order-block { border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+  .pick-order-block.done { opacity: 0.4; }
+  .pick-order-head { font-size: 14px; font-weight: bold; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .pick-done-btn { font-size: 12px; padding: 7px 12px; border-radius: 8px; border: none; background: #38a169; color: #fff; font-weight: bold; cursor: pointer; }
+  .pick-order-block.done .pick-done-btn { background: #a0aec0; }
+  .pick-item-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 14px; border-bottom: 1px solid #f7fafc; }
+  .pick-item-loc { font-weight: 900; color: #c05621; min-width: 90px; font-size: 15px; }
+  .pick-item-qty { font-weight: bold; color: #1a202c; white-space: nowrap; }
+  .pick-trip-header { font-size: 13px; font-weight: bold; color: #fff; background: #dd6b20; padding: 6px 10px; border-radius: 8px; margin: 10px 0 6px 0; }
+  .pick-trip-order-tag { font-size: 11px; color: #718096; }
 </style>
 </head>
 <body>
 
   <h1>📦 재고 위치 찾기</h1>
 
-  <div class="search-row">
-    <input type="text" id="searchBox" placeholder="상품명을 입력하거나 마이크를 눌러 말하세요" oninput="onSearchInput()" onkeydown="onSearchKeydown(event)">
-    <button id="micBtn" onclick="startVoiceSearch()">🎤</button>
-    <button id="scanBtn" onclick="openScanModal()" title="송장을 카메라로 찍어서 상품명을 인식합니다">📷</button>
+  <div class="main-tab-row">
+    <button id="mainTabSearch" class="main-tab-btn active" onclick="switchMainTab('search')">🔍 재고 검색</button>
+    <button id="mainTabPick" class="main-tab-btn" onclick="switchMainTab('pick')">📋 오늘의 피킹리스트</button>
   </div>
-  <div id="status"></div>
-  <div id="resultBox"><div class="empty-msg">검색어를 입력하거나 마이크를 눌러주세요</div></div>
 
-  <div id="syncRow">
-    마지막 동기화: <span id="syncTime">-</span>
-    &nbsp;<button id="syncBtn" onclick="loadData(true)">🔄 최신자료 새로고침</button>
+  <div id="searchTabBox">
+    <div class="search-row">
+      <input type="text" id="searchBox" placeholder="상품명을 입력하거나 마이크를 눌러 말하세요" oninput="onSearchInput()" onkeydown="onSearchKeydown(event)">
+      <button id="micBtn" onclick="startVoiceSearch()">🎤</button>
+      <button id="scanBtn" onclick="openScanModal()" title="송장을 카메라로 찍어서 상품명을 인식합니다">📷</button>
+    </div>
+    <div id="status"></div>
+    <div id="resultBox"><div class="empty-msg">검색어를 입력하거나 마이크를 눌러주세요</div></div>
+
+    <div id="syncRow">
+      마지막 동기화: <span id="syncTime">-</span>
+      &nbsp;<button id="syncBtn" onclick="loadData(true)">🔄 최신자료 새로고침</button>
+    </div>
+  </div>
+
+  <div id="pickTabBox" style="display:none;">
+    <div class="pick-controls">
+      <label>🛒 한 번에 담을 최대 개수: <input type="number" id="cartCapacity" value="30" min="5" style="width:60px;" onchange="renderPickList()"></label>
+      <button class="pick-refresh-btn" onclick="loadPickList()">🔄 새로고침</button>
+      <label style="margin-left:auto;"><input type="checkbox" id="hideDoneToggle" onchange="renderPickList()"> 완료된 주문 숨기기</label>
+    </div>
+    <div id="pickStatus"></div>
+    <div id="pickListBox"></div>
   </div>
 
   <!-- 🌟 [신규 - 2026.07] 송장 스캔(카메라 촬영 → 영역 지정 → 문자인식) 모달 -->
@@ -145,6 +191,7 @@
   // ══════════════════════════════════════════════════════════════
   const WEBAPP_URL = "https://script.google.com/macros/s/AKfycbxW_ymW5HsG_O9dD8sFuAR3FgOe3uy2lpgz4aSBIvotVQ4Wd019YC8ZMKqqrcF0TKRQ1w/exec";
   const API_KEY = "dlwlsgksdmlworhvmfhrmfoa!!!";
+  const ORDER_IMPORT_KEY = "xotjdzjajtmdlwlsgks!"; // 🌟 [신규 - 2026.07] 완료처리(쓰기)에 쓰는 키 - Config.gs의 API_ORDER_IMPORT_KEY와 동일해야 함
 
   let allData = [];
   let searchDebounceTimer = null;
@@ -568,6 +615,130 @@
     renderMatchedCards(combined, '인식된 상품명으로 찾은 결과가 없습니다.');
     if (combined.length > 0) speakOneItem(combined[0]);
     else speakText('인식된 상품을 찾지 못했습니다.');
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // 🌟 [신규 - 2026.07] 오늘의 피킹리스트 - 재고 검색과 같은 화면에서 탭만 바꾸면 바로 접근 가능.
+  // 완료 처리 상태는 서버(SYS_PickListDone)에 저장되어 어느 기기로 열어도 유지됨.
+  // ═══════════════════════════════════════════════════════════
+  let pickBatches = [];
+  let pickViewMode = {}; // importId -> 'order' | 'loc'
+
+  function switchMainTab(tab) {
+    document.getElementById('searchTabBox').style.display = tab === 'search' ? 'block' : 'none';
+    document.getElementById('pickTabBox').style.display = tab === 'pick' ? 'block' : 'none';
+    document.getElementById('mainTabSearch').classList.toggle('active', tab === 'search');
+    document.getElementById('mainTabPick').classList.toggle('active', tab === 'pick');
+    if (tab === 'pick' && pickBatches.length === 0) loadPickList();
+  }
+
+  function loadPickList() {
+    var status = document.getElementById('pickStatus');
+    status.innerText = '⏳ 오늘의 주문을 불러오는 중...';
+    fetch(WEBAPP_URL + '?action=getTodayPickList&key=' + encodeURIComponent(API_KEY))
+      .then(function (res) { return res.json(); })
+      .then(function (json) {
+        if (!json.success) { status.innerText = '❌ ' + json.message; return; }
+        pickBatches = json.data || [];
+        status.innerText = pickBatches.length === 0 ? '오늘 업로드된 주문이 없습니다.' : '✅ 배치 ' + pickBatches.length + '건 불러옴';
+        pickBatches.forEach(function (b) { if (!pickViewMode[b.importId]) pickViewMode[b.importId] = 'order'; });
+        renderPickList();
+      })
+      .catch(function (err) { status.innerText = '❌ 통신 오류: ' + err; });
+  }
+
+  // 🌟 카트 용량 기준으로 "위치순 정렬된 아이템"을 여러 트립(이동 묶음)으로 나눈다.
+  // 수량이 큰(카트 용량급) 낱개 주문은 혼자만 트립을 차지하게 해서 다른 것과 안 섞이게 함.
+  function splitIntoTrips(flatItems, capacity) {
+    var trips = [];
+    var current = [], currentQty = 0;
+    flatItems.forEach(function (it) {
+      var qty = Number(it.qty) || 0;
+      if (qty >= capacity) {
+        if (current.length > 0) { trips.push(current); current = []; currentQty = 0; }
+        trips.push([it]);
+        return;
+      }
+      if (currentQty + qty > capacity && current.length > 0) { trips.push(current); current = []; currentQty = 0; }
+      current.push(it); currentQty += qty;
+    });
+    if (current.length > 0) trips.push(current);
+    return trips;
+  }
+
+  function switchPickViewMode(importId, mode) {
+    pickViewMode[importId] = mode;
+    renderPickList();
+  }
+
+  function renderPickList() {
+    var box = document.getElementById('pickListBox');
+    var hideDone = document.getElementById('hideDoneToggle').checked;
+    var capacity = Number(document.getElementById('cartCapacity').value) || 30;
+
+    if (pickBatches.length === 0) { box.innerHTML = ''; return; }
+
+    box.innerHTML = pickBatches.map(function (batch) {
+      var orders = batch.orders.filter(function (o) { return !hideDone || !o.isDone; });
+      var mode = pickViewMode[batch.importId] || 'order';
+
+      var bodyHtml;
+      if (mode === 'order') {
+        bodyHtml = orders.map(function (o) {
+          var itemRows = o.items.map(function (it) {
+            return '<div class="pick-item-row"><span class="pick-item-loc">📍 ' + it.location + '</span><span style="flex:1;">' + (it.productName || '') + (it.optionName ? ' · ' + it.optionName : '') + '</span><span class="pick-item-qty">' + it.qty + '개</span></div>';
+          }).join('');
+          return '<div class="pick-order-block' + (o.isDone ? ' done' : '') + '">'
+            + '<div class="pick-order-head"><span><b>' + (o.receiverName || '') + '</b> <span style="color:#805ad5; font-size:11px;">[' + (o.platform || '') + ' ' + (o.platformOrderNo || '') + ']</span></span>'
+            + '<button class="pick-done-btn" onclick="togglePickDone(\'' + o.groupKey + '\', ' + (!o.isDone) + ')">' + (o.isDone ? '↩️ 완료취소' : '✅ 완료') + '</button></div>'
+            + itemRows
+            + '</div>';
+        }).join('');
+        if (orders.length === 0) bodyHtml = '<div style="color:#a0aec0; padding:10px;">표시할 주문이 없습니다.</div>';
+      } else {
+        // 위치별(트립분할) 보기 - 완료된 주문은 통째로 제외
+        var flat = [];
+        orders.forEach(function (o) {
+          if (o.isDone) return;
+          o.items.forEach(function (it) { flat.push({ location: it.location, productName: it.productName, optionName: it.optionName, qty: it.qty, orderTag: (o.receiverName || '') }); });
+        });
+        flat.sort(function (a, b) { return String(a.location).localeCompare(String(b.location)); });
+        var trips = splitIntoTrips(flat, capacity);
+        if (trips.length === 0) {
+          bodyHtml = '<div style="color:#a0aec0; padding:10px;">표시할 항목이 없습니다.</div>';
+        } else {
+          bodyHtml = trips.map(function (trip, tIdx) {
+            var qtySum = trip.reduce(function (s, it) { return s + (Number(it.qty) || 0); }, 0);
+            var rows = trip.map(function (it) {
+              return '<div class="pick-item-row"><span class="pick-item-loc">📍 ' + it.location + '</span><span style="flex:1;">' + (it.productName || '') + (it.optionName ? ' · ' + it.optionName : '') + '<div class="pick-trip-order-tag">→ ' + it.orderTag + '</div></span><span class="pick-item-qty">' + it.qty + '개</span></div>';
+            }).join('');
+            return '<div class="pick-trip-header">🛒 ' + (tIdx + 1) + '차 이동 (총 ' + qtySum + '개)</div>' + rows;
+          }).join('');
+        }
+      }
+
+      return '<div class="pick-batch-card">'
+        + '<div class="pick-batch-head"><span>🕐 ' + batch.uploadedAt + ' 업로드 · ' + batch.fileName + ' (총 ' + batch.orders.length + '건)</span></div>'
+        + '<div class="pick-view-toggle">'
+        + '<button class="' + (mode === 'order' ? 'active' : '') + '" onclick="switchPickViewMode(\'' + batch.importId + '\', \'order\')">🗂️ 주문별 (포장용)</button>'
+        + '<button class="' + (mode === 'loc' ? 'active' : '') + '" onclick="switchPickViewMode(\'' + batch.importId + '\', \'loc\')">📍 위치별 (동선 최소화)</button>'
+        + '</div>'
+        + bodyHtml
+        + '</div>';
+    }).join('');
+  }
+
+  function togglePickDone(groupKey, isDone) {
+    fetch(WEBAPP_URL, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'markPickDone', key: ORDER_IMPORT_KEY, groupKey: groupKey, isDone: isDone })
+    }).then(function (res) { return res.json(); })
+      .then(function (json) {
+        if (!json.success) { alert('처리 실패: ' + json.message); return; }
+        pickBatches.forEach(function (b) { b.orders.forEach(function (o) { if (o.groupKey === groupKey) o.isDone = isDone; }); });
+        renderPickList();
+      })
+      .catch(function (err) { alert('통신 오류: ' + err); });
   }
 
   // 페이지 열리자마자 자동으로 최신 데이터 불러오기

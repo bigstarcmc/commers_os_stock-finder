@@ -10,6 +10,9 @@
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
   * { box-sizing: border-box; }
+  html, body {
+    overflow-x: hidden; /* 🌟 [버그수정 - 2026.07] 어떤 이유로든 가로로 넘치는 요소가 있어도 화면이 옆으로 안 밀리게 방지 */
+  }
   body {
     margin: 0; padding: 16px;
     font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", sans-serif;
@@ -23,7 +26,7 @@
     display: flex; gap: 8px; margin-bottom: 14px;
   }
   #searchBox {
-    flex: 1; font-size: 20px; padding: 14px 16px;
+    flex: 1; min-width: 0; font-size: 20px; padding: 14px 16px;
     border: 2px solid #cbd5e0; border-radius: 12px;
   }
   #micBtn {
@@ -118,8 +121,8 @@
 
   <!-- 🌟 [신규 - 2026.07] 송장 스캔(카메라 촬영 → 영역 지정 → 문자인식) 모달 -->
   <div id="scanModal">
-    <div id="scanHint">① 송장의 품명 부분이 잘 보이게 촬영하세요</div>
-    <video id="scanVideo" autoplay playsinline></video>
+    <div id="scanHint">① 화면을 한 번 탭해서 초점을 맞춘 뒤, 송장의 품명 부분이 잘 보이면 촬영하세요</div>
+    <video id="scanVideo" autoplay playsinline onclick="tryRefocusCamera()"></video>
     <div id="scanCanvasWrap" style="display:none;">
       <canvas id="scanCanvas"></canvas>
       <div id="scanSelBox"></div>
@@ -402,14 +405,24 @@
 
   function openScanModal() {
     document.getElementById('scanModal').classList.add('open');
-    document.getElementById('scanHint').innerText = '① 송장의 품명 부분이 잘 보이게 촬영하세요';
+    document.getElementById('scanHint').innerText = '① 화면을 한 번 탭해서 초점을 맞춘 뒤, 송장의 품명 부분이 잘 보이면 촬영하세요';
     document.getElementById('scanVideo').style.display = 'block';
     document.getElementById('scanCanvasWrap').style.display = 'none';
     document.getElementById('scanCaptureBtn').style.display = 'inline-block';
     document.getElementById('scanRecognizeBtn').style.display = 'none';
     document.getElementById('scanRetakeBtn').style.display = 'none';
     document.getElementById('scanStatus').innerText = '';
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    // 🌟 [버그수정 - 2026.07] 해상도를 지정 안 하면 브라우저가 낮은 기본 해상도(보통 640x480)로
+    // 스트림을 열어서 확대돼 보이는 화면이 흐릿하게 나옴 - 고해상도로 명시적으로 요청.
+    // focusMode는 일부 안드로이드 기기에서만 지원되지만, 지원 안 하면 그냥 무시되니 넣어둬도 안전함.
+    navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: 'environment',
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        advanced: [{ focusMode: 'continuous' }]
+      }
+    })
       .then(function (stream) {
         scanStream = stream;
         document.getElementById('scanVideo').srcObject = stream;
@@ -444,6 +457,19 @@
   }
 
   function retakeInvoiceFrame() { openScanModal(); }
+
+  // 🌟 [신규 - 2026.07] 영상을 탭하면 재초점을 시도한다 - 안드로이드 일부 기기는 자동초점이 잘 안 잡혀서
+  // 계속 흐릿한 경우가 있는데, 이렇게 수동으로 한 번 더 요청하면 도움이 되는 경우가 있음.
+  // 지원 안 하는 브라우저/기기에서는 그냥 조용히 무시됨(에러 안 남).
+  function tryRefocusCamera() {
+    if (!scanStream) return;
+    var track = scanStream.getVideoTracks()[0];
+    if (!track || !track.applyConstraints) return;
+    track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(function () {});
+    var status = document.getElementById('scanStatus');
+    status.innerText = '🔍 초점 다시 맞추는 중...';
+    setTimeout(function () { if (status.innerText === '🔍 초점 다시 맞추는 중...') status.innerText = ''; }, 800);
+  }
 
   function setupScanSelection() {
     var wrap = document.getElementById('scanCanvasWrap');

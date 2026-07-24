@@ -132,6 +132,18 @@
   .pick-item-wrap { border-bottom: 1px solid #f7fafc; }
   .pick-item-wrap .pick-item-row { border-bottom: none; }
   .pick-item-img-wrap { padding: 4px 0 8px 100px; }
+
+  /* 🌟 [신규 - 2026.07] 상단 배치 인덱스 리스트 */
+  #pickIndexBox { margin-bottom: 12px; }
+  .pick-index-row {
+    display: flex; justify-content: space-between; align-items: center;
+    background: #fff; border-radius: 10px; padding: 12px 14px; margin-bottom: 6px;
+    font-size: 13px; font-weight: bold; color: #2b6cb0; cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+  .pick-index-row.expanded { background: #ebf8ff; border: 2px solid #2b6cb0; }
+  .pick-index-row.all-done { color: #38a169; opacity: 0.7; }
+  .pick-index-arrow { color: #a0aec0; }
 </style>
 </head>
 <body>
@@ -166,6 +178,7 @@
       <label style="margin-left:auto;"><input type="checkbox" id="hideDoneToggle" onchange="renderPickList()"> 완료된 주문 숨기기</label>
     </div>
     <div id="pickStatus"></div>
+    <div id="pickIndexBox"></div>
     <div id="pickListBox"></div>
   </div>
 
@@ -676,9 +689,11 @@
   }
 
   let pickRowIdCounter = 0;
-  let pickManualExpand = {}; // importId -> true면 전체완료라도 강제로 펼쳐서 봄
+  let pickBatchExpanded = {}; // importId -> true면 펼쳐진 상태 (기본 접힘)
+  let pickOrderExpanded = {}; // groupKey -> true면 펼쳐진 상태 (기본 펼침)
 
   // 🌟 [신규 - 2026.07] 품목명(행) 클릭하면 카드가 안 벗어나고 그 안에서 이미지가 펼쳐짐/접힘
+  // + 상품명은 빼고 옵션명만 표시 (상품명·옵션명 둘 다 나오면 지저분하다는 피드백 반영)
   function pickItemRowHtml(it) {
     var rowId = 'pickimg' + (pickRowIdCounter++);
     var hasImg = !!it.skuImageUrl;
@@ -686,10 +701,11 @@
       ? '<div class="pick-item-img-wrap" id="' + rowId + '" style="display:none;"><img src="' + it.skuImageUrl + '" referrerpolicy="no-referrer" loading="lazy" style="max-width:170px; max-height:170px; border-radius:8px; margin:6px 0; display:block;"></div>'
       : '';
     var clickAttr = hasImg ? ' onclick="toggleItemImage(\'' + rowId + '\')" style="cursor:pointer;"' : '';
+    var label = it.optionName || it.productName || '';
     return '<div class="pick-item-wrap">'
       + '<div class="pick-item-row"' + clickAttr + '>'
       + '<span class="pick-item-loc">📍 ' + it.location + '</span>'
-      + '<span style="flex:1;">' + (it.productName || '') + (it.optionName ? ' · ' + it.optionName : '') + (it.orderTag ? '<div class="pick-trip-order-tag">→ ' + it.orderTag + '</div>' : '') + (hasImg ? '<span style="color:#a0aec0; font-size:11px;"> 🖼️눌러서 사진보기</span>' : '') + '</span>'
+      + '<span style="flex:1;">' + label + (it.orderTag ? '<div class="pick-trip-order-tag">→ ' + it.orderTag + '</div>' : '') + (hasImg ? '<span style="color:#a0aec0; font-size:11px;"> 🖼️눌러서 사진보기</span>' : '') + '</span>'
       + '<span class="pick-item-qty">' + it.qty + '개</span>'
       + '</div>'
       + imgHtml
@@ -699,12 +715,34 @@
     var el = document.getElementById(rowId);
     if (el) el.style.display = (el.style.display === 'block') ? 'none' : 'block';
   }
-  function toggleBatchCollapse(importId) {
-    pickManualExpand[importId] = !pickManualExpand[importId];
+  function toggleBatchExpand(importId) {
+    pickBatchExpanded[importId] = !pickBatchExpanded[importId];
+    renderPickList();
+  }
+  function toggleOrderExpand(groupKey, event) {
+    if (event) event.stopPropagation();
+    pickOrderExpanded[groupKey] = pickOrderExpanded[groupKey] === false ? true : false;
     renderPickList();
   }
 
+  // 🌟 [신규 - 2026.07] 상단 "배치 인덱스" - 오늘 올라온 배치들을 목록으로 보여주고, 누르면 그 배치만
+  // 아래에서 펼쳐짐 (기본은 전부 접혀있음 - 필요한 것만 골라서 열어보는 방식)
+  function renderPickIndex() {
+    var nameFilter = (document.getElementById('pickNameFilter').value || '').trim().toLowerCase();
+    return pickBatches.map(function (batch) {
+      var doneCount = batch.orders.filter(function (o) { return o.isDone; }).length;
+      var allDone = batch.orders.length > 0 && doneCount === batch.orders.length;
+      var expanded = !!pickBatchExpanded[batch.importId];
+      return '<div class="pick-index-row' + (allDone ? ' all-done' : '') + (expanded ? ' expanded' : '') + '" onclick="toggleBatchExpand(\'' + batch.importId + '\')">'
+        + '<span>' + (allDone ? '✅ ' : '🕐 ') + batch.uploadedAt + ' 업로드 · ' + batch.fileName + ' (완료 ' + doneCount + '/' + batch.orders.length + ')</span>'
+        + '<span class="pick-index-arrow">' + (expanded ? '▼' : '▶') + '</span>'
+        + '</div>';
+    }).join('');
+  }
+
   function renderPickList() {
+    document.getElementById('pickIndexBox').innerHTML = pickBatches.length === 0 ? '' : renderPickIndex();
+
     var box = document.getElementById('pickListBox');
     var hideDone = document.getElementById('hideDoneToggle').checked;
     var capacity = Number(document.getElementById('cartCapacity').value) || 30;
@@ -712,31 +750,26 @@
 
     if (pickBatches.length === 0) { box.innerHTML = ''; return; }
 
-    box.innerHTML = pickBatches.map(function (batch) {
-      // 🌟 [신규 - 2026.07] 받는사람 이름으로 검색 - 이름이 일치하는 주문만 남김
+    var expandedBatches = pickBatches.filter(function (b) { return pickBatchExpanded[b.importId]; });
+    if (expandedBatches.length === 0) { box.innerHTML = '<div style="color:#a0aec0; text-align:center; padding:16px;">위 목록에서 배치를 눌러 펼쳐보세요.</div>'; return; }
+
+    box.innerHTML = expandedBatches.map(function (batch) {
+      // 🌟 받는사람 이름 검색
       var nameFiltered = nameFilter ? batch.orders.filter(function (o) { return String(o.receiverName || '').toLowerCase().indexOf(nameFilter) !== -1; }) : batch.orders;
       var orders = nameFiltered.filter(function (o) { return !hideDone || !o.isDone; });
       var mode = pickViewMode[batch.importId] || 'order';
 
-      // 🌟 [신규 - 2026.07] 배치 안의 주문이 전부 완료되면 접어서 한 줄 요약으로만 보여줌 (필요하면 펼쳐볼 수 있음)
-      var allDone = batch.orders.length > 0 && batch.orders.every(function (o) { return o.isDone; });
-      var collapsed = allDone && !pickManualExpand[batch.importId];
-
-      if (collapsed) {
-        return '<div class="pick-batch-card" style="opacity:0.6;">'
-          + '<div class="pick-batch-head" style="cursor:pointer;" onclick="toggleBatchCollapse(\'' + batch.importId + '\')">'
-          + '<span>✅ 🕐 ' + batch.uploadedAt + ' 업로드 · ' + batch.fileName + ' — 전체 완료 (' + batch.orders.length + '건)</span>'
-          + '<span style="font-size:12px; color:#2b6cb0;">▶ 펼쳐보기</span>'
-          + '</div></div>';
-      }
-
       var bodyHtml;
       if (mode === 'order') {
-        bodyHtml = orders.map(function (o) {
-          var itemRows = o.items.map(function (it) { return pickItemRowHtml(it); }).join('');
+        // 🌟 [신규 - 2026.07] 완료한 주문은 목록 맨 아래로 - 안 끝난 것들이 항상 위에 모여있게
+        var sortedOrders = orders.slice().sort(function (a, b) { return (a.isDone ? 1 : 0) - (b.isDone ? 1 : 0); });
+        bodyHtml = sortedOrders.map(function (o) {
+          var oExpanded = pickOrderExpanded[o.groupKey] !== false; // 기본 펼침
+          var itemRows = oExpanded ? o.items.map(function (it) { return pickItemRowHtml(it); }).join('') : '';
           return '<div class="pick-order-block' + (o.isDone ? ' done' : '') + '">'
-            + '<div class="pick-order-head"><span><b>' + (o.receiverName || '') + '</b> <span style="color:#805ad5; font-size:11px;">[' + (o.platform || '') + ' ' + (o.platformOrderNo || '') + ']</span></span>'
-            + '<button class="pick-done-btn" onclick="togglePickDone(\'' + o.groupKey + '\', ' + (!o.isDone) + ')">' + (o.isDone ? '↩️ 완료취소' : '✅ 완료') + '</button></div>'
+            + '<div class="pick-order-head" onclick="toggleOrderExpand(\'' + o.groupKey + '\', event)" style="cursor:pointer;">'
+            + '<span>' + (oExpanded ? '▼' : '▶') + ' <b>' + (o.receiverName || '') + '</b> <span style="color:#805ad5; font-size:11px;">[' + (o.platform || '') + ' ' + (o.platformOrderNo || '') + ']</span></span>'
+            + '<button class="pick-done-btn" onclick="togglePickDone(\'' + o.groupKey + '\', ' + (!o.isDone) + ', event)">' + (o.isDone ? '↩️ 완료취소' : '✅ 완료') + '</button></div>'
             + itemRows
             + '</div>';
         }).join('');
@@ -762,7 +795,9 @@
       }
 
       return '<div class="pick-batch-card">'
-        + '<div class="pick-batch-head"><span>🕐 ' + batch.uploadedAt + ' 업로드 · ' + batch.fileName + ' (총 ' + batch.orders.length + '건)</span></div>'
+        + '<div class="pick-batch-head" onclick="toggleBatchExpand(\'' + batch.importId + '\')" style="cursor:pointer;">'
+        + '<span>▼ 🕐 ' + batch.uploadedAt + ' 업로드 · ' + batch.fileName + ' (총 ' + batch.orders.length + '건)</span>'
+        + '</div>'
         + '<div class="pick-view-toggle">'
         + '<button class="' + (mode === 'order' ? 'active' : '') + '" onclick="switchPickViewMode(\'' + batch.importId + '\', \'order\')">🗂️ 주문별 (포장용)</button>'
         + '<button class="' + (mode === 'loc' ? 'active' : '') + '" onclick="switchPickViewMode(\'' + batch.importId + '\', \'loc\')">📍 위치별 (동선 최소화)</button>'
@@ -772,7 +807,8 @@
     }).join('');
   }
 
-  function togglePickDone(groupKey, isDone) {
+  function togglePickDone(groupKey, isDone, event) {
+    if (event) event.stopPropagation();
     fetch(WEBAPP_URL, {
       method: 'POST',
       body: JSON.stringify({ action: 'markPickDone', key: ORDER_IMPORT_KEY, groupKey: groupKey, isDone: isDone })

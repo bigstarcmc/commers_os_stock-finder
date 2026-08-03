@@ -125,7 +125,9 @@
   .pick-done-btn { font-size: 12px; padding: 7px 12px; border-radius: 8px; border: none; background: #38a169; color: #fff; font-weight: bold; cursor: pointer; }
   .pick-order-block.done .pick-done-btn { background: #a0aec0; }
   .pick-item-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; font-size: 14px; border-bottom: 1px solid #f7fafc; }
-  .pick-item-loc { font-weight: 900; color: #c05621; min-width: 90px; font-size: 15px; }
+  /* 🌟 [개편 - 2026.08] 어머니가 보시기에 너무 작고 헷갈린다는 피드백 - 크기를 훨씬 키우고
+     상품명과 한 줄에 욱여넣지 않고 위치만 따로 한 줄을 차지하게 바꿨다. */
+  .pick-item-loc-line { font-weight: 900; font-size: 24px; line-height: 1.5; padding: 6px 0 2px 0; }
   .pick-item-qty { font-weight: bold; color: #1a202c; white-space: nowrap; }
   .pick-trip-header { font-size: 13px; font-weight: bold; color: #fff; background: #dd6b20; padding: 6px 10px; border-radius: 8px; margin: 10px 0 6px 0; }
   .pick-trip-order-tag { font-size: 11px; color: #718096; }
@@ -283,6 +285,25 @@
     }).join(', ');
   }
 
+  // 🌟 [신규 - 2026.08] 어머니가 피킹리스트를 보실 때 숫자/영문 나열이 헷갈리신다는 피드백으로,
+  // "차수/동/층/호"를 각각 다른 색깔로 구분해서 큼직하게 보여주는 버전. HTML(색상 span)을
+  // 반환하므로 innerHTML로만 사용해야 함 (일반 텍스트로 쓰면 태그가 그대로 보임).
+  function translateLocationCodeColored(code) {
+    if (!code) return '위치 미지정';
+    return String(code).split(',').map(function (part) {
+      part = part.trim();
+      var m = part.match(/^([A-Za-z]{2})(\d+)-([A-Za-z])(\d+)(\d{2})$/);
+      if (!m) return part;
+      var prefixName = WAREHOUSE_PREFIX_MAP[m[1].toUpperCase()] || m[1].toUpperCase();
+      var order = m[2], building = m[3].toUpperCase();
+      var floor = parseInt(m[4], 10), unit = parseInt(m[5], 10);
+      return '<span style="color:#2b6cb0;">' + prefixName + order + '차</span> '
+           + '<span style="color:#38a169;">' + building + '동</span> '
+           + '<span style="color:#805ad5;">' + floor + '층</span> '
+           + '<span style="color:#e53e3e;">' + unit + '호</span>';
+    }).join(', ');
+  }
+
   function loadData(manual) {
     document.getElementById('searchBox').disabled = true;
     document.getElementById('micBtn').disabled = true;
@@ -374,11 +395,11 @@
       return;
     }
     box.innerHTML = matched.slice(0, 20).map(function (it, idx) {
-      var friendly = translateLocationCode(it.location);
+      var friendly = translateLocationCodeColored(it.location);
       var imgHtml = it.skuImageUrl
         ? '<img src="' + it.skuImageUrl + '" class="result-img" referrerpolicy="no-referrer" loading="lazy" onerror="this.style.display=\'none\'">'
         : '';
-      var bulkHtml = it.bulkLocation ? '<div class="result-qty">📦 저장위치: ' + translateLocationCode(it.bulkLocation) + '</div>' : '';
+      var bulkHtml = it.bulkLocation ? '<div class="result-qty">📦 저장위치: ' + translateLocationCodeColored(it.bulkLocation) + '</div>' : '';
       return '<div class="result-card">'
         + imgHtml
         + '<div class="result-name">' + (it.productName || '') + (it.optionName ? ' · ' + it.optionName : '') + '</div>'
@@ -476,9 +497,6 @@
     document.getElementById('scanRecognizeBtn').style.display = 'none';
     document.getElementById('scanRetakeBtn').style.display = 'none';
     document.getElementById('scanStatus').innerText = '';
-    // 🌟 [버그수정 - 2026.07] 해상도를 지정 안 하면 브라우저가 낮은 기본 해상도(보통 640x480)로
-    // 스트림을 열어서 확대돼 보이는 화면이 흐릿하게 나옴 - 고해상도로 명시적으로 요청.
-    // focusMode는 일부 안드로이드 기기에서만 지원되지만, 지원 안 하면 그냥 무시되니 넣어둬도 안전함.
     navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: 'environment',
@@ -522,9 +540,6 @@
 
   function retakeInvoiceFrame() { openScanModal(); }
 
-  // 🌟 [신규 - 2026.07] 영상을 탭하면 재초점을 시도한다 - 안드로이드 일부 기기는 자동초점이 잘 안 잡혀서
-  // 계속 흐릿한 경우가 있는데, 이렇게 수동으로 한 번 더 요청하면 도움이 되는 경우가 있음.
-  // 지원 안 하는 브라우저/기기에서는 그냥 조용히 무시됨(에러 안 남).
   function tryRefocusCamera() {
     if (!scanStream) return;
     var track = scanStream.getVideoTracks()[0];
@@ -597,8 +612,6 @@
     });
   }
 
-  // 🌟 인식된 텍스트에서 상품명만 추출 - 송장 품명란은 보통 "상품명/수량" 형태라 "/" 앞부분만 사용.
-  // 여러 줄이 인식되면 줄마다 다 상품명 후보로 보고, 전부 검색해서 결과를 합쳐서 보여준다.
   function processInvoiceOcrText(rawText) {
     var lines = rawText.split(/\n+/).map(function (l) { return l.trim(); }).filter(function (l) { return l.length > 1; });
     var candidates = lines.map(function (l) { return l.split('/')[0].trim(); }).filter(function (c) { return c; });
@@ -611,7 +624,6 @@
     searchMultipleQueries(candidates);
   }
 
-  // 🌟 여러 상품명 후보를 한 번에 검색해서 결과를 합쳐 보여줌 (중복 SKU는 한 번만)
   function searchMultipleQueries(queries) {
     var seenIds = {};
     var combined = [];
@@ -635,11 +647,10 @@
   }
 
   // ═══════════════════════════════════════════════════════════
-  // 🌟 [신규 - 2026.07] 오늘의 피킹리스트 - 재고 검색과 같은 화면에서 탭만 바꾸면 바로 접근 가능.
-  // 완료 처리 상태는 서버(SYS_PickListDone)에 저장되어 어느 기기로 열어도 유지됨.
+  // 🌟 [신규 - 2026.07] 오늘의 피킹리스트
   // ═══════════════════════════════════════════════════════════
   let pickBatches = [];
-  let pickViewMode = {}; // importId -> 'order' | 'loc'
+  let pickViewMode = {};
 
   function switchMainTab(tab) {
     document.getElementById('searchTabBox').style.display = tab === 'search' ? 'block' : 'none';
@@ -664,8 +675,6 @@
       .catch(function (err) { status.innerText = '❌ 통신 오류: ' + err; });
   }
 
-  // 🌟 카트 용량 기준으로 "위치순 정렬된 아이템"을 여러 트립(이동 묶음)으로 나눈다.
-  // 수량이 큰(카트 용량급) 낱개 주문은 혼자만 트립을 차지하게 해서 다른 것과 안 섞이게 함.
   function splitIntoTrips(flatItems, capacity) {
     var trips = [];
     var current = [], currentQty = 0;
@@ -689,22 +698,22 @@
   }
 
   let pickRowIdCounter = 0;
-  let pickBatchExpanded = {}; // importId -> true면 펼쳐진 상태 (기본 접힘)
-  let pickOrderExpanded = {}; // groupKey -> true면 펼쳐진 상태 (기본 펼침)
+  let pickBatchExpanded = {};
+  let pickOrderExpanded = {};
 
-  // 🌟 [신규 - 2026.07] 품목명(행) 클릭하면 카드가 안 벗어나고 그 안에서 이미지가 펼쳐짐/접힘
-  // + 상품명은 빼고 옵션명만 표시 (상품명·옵션명 둘 다 나오면 지저분하다는 피드백 반영)
   function pickItemRowHtml(it) {
     var rowId = 'pickimg' + (pickRowIdCounter++);
     var hasImg = !!it.skuImageUrl;
     var imgHtml = hasImg
-      ? '<div class="pick-item-img-wrap" id="' + rowId + '" style="display:none;"><img src="' + it.skuImageUrl + '" referrerpolicy="no-referrer" loading="lazy" style="max-width:170px; max-height:170px; border-radius:8px; margin:6px 0; display:block;"></div>'
+      ? '<div class="pick-item-img-wrap" id="' + rowId + '" style="display:none; padding-left:0;"><img src="' + it.skuImageUrl + '" referrerpolicy="no-referrer" loading="lazy" style="max-width:170px; max-height:170px; border-radius:8px; margin:6px 0; display:block;"></div>'
       : '';
     var clickAttr = hasImg ? ' onclick="toggleItemImage(\'' + rowId + '\')" style="cursor:pointer;"' : '';
     var label = it.optionName || it.productName || '';
+    // 🌟 [개편 - 2026.08] "TS02-D601" 같은 원본 코드 대신 "태성2차 D동 6층 1호"처럼 해독하고,
+    // 차수/동/층/호를 색깔로 구분해서 큰 글씨로 따로 한 줄에 보여준다(어머니가 헷갈려하셔서 개선).
     return '<div class="pick-item-wrap">'
+      + '<div class="pick-item-loc-line">📍 ' + translateLocationCodeColored(it.location) + '</div>'
       + '<div class="pick-item-row"' + clickAttr + '>'
-      + '<span class="pick-item-loc">📍 ' + it.location + '</span>'
       + '<span style="flex:1;">' + label + (it.orderTag ? '<div class="pick-trip-order-tag">→ ' + it.orderTag + '</div>' : '') + (hasImg ? '<span style="color:#a0aec0; font-size:11px;"> 🖼️눌러서 사진보기</span>' : '') + '</span>'
       + '<span class="pick-item-qty">' + it.qty + '개</span>'
       + '</div>'
@@ -725,8 +734,6 @@
     renderPickList();
   }
 
-  // 🌟 [신규 - 2026.07] 상단 "배치 인덱스" - 오늘 올라온 배치들을 목록으로 보여주고, 누르면 그 배치만
-  // 아래에서 펼쳐짐 (기본은 전부 접혀있음 - 필요한 것만 골라서 열어보는 방식)
   function renderPickIndex() {
     var nameFilter = (document.getElementById('pickNameFilter').value || '').trim().toLowerCase();
     return pickBatches.map(function (batch) {
@@ -754,17 +761,15 @@
     if (expandedBatches.length === 0) { box.innerHTML = '<div style="color:#a0aec0; text-align:center; padding:16px;">위 목록에서 배치를 눌러 펼쳐보세요.</div>'; return; }
 
     box.innerHTML = expandedBatches.map(function (batch) {
-      // 🌟 받는사람 이름 검색
       var nameFiltered = nameFilter ? batch.orders.filter(function (o) { return String(o.receiverName || '').toLowerCase().indexOf(nameFilter) !== -1; }) : batch.orders;
       var orders = nameFiltered.filter(function (o) { return !hideDone || !o.isDone; });
       var mode = pickViewMode[batch.importId] || 'order';
 
       var bodyHtml;
       if (mode === 'order') {
-        // 🌟 [신규 - 2026.07] 완료한 주문은 목록 맨 아래로 - 안 끝난 것들이 항상 위에 모여있게
         var sortedOrders = orders.slice().sort(function (a, b) { return (a.isDone ? 1 : 0) - (b.isDone ? 1 : 0); });
         bodyHtml = sortedOrders.map(function (o) {
-          var oExpanded = pickOrderExpanded[o.groupKey] !== false; // 기본 펼침
+          var oExpanded = pickOrderExpanded[o.groupKey] !== false;
           var itemRows = oExpanded ? o.items.map(function (it) { return pickItemRowHtml(it); }).join('') : '';
           return '<div class="pick-order-block' + (o.isDone ? ' done' : '') + '">'
             + '<div class="pick-order-head" onclick="toggleOrderExpand(\'' + o.groupKey + '\', event)" style="cursor:pointer;">'
@@ -775,7 +780,6 @@
         }).join('');
         if (orders.length === 0) bodyHtml = '<div style="color:#a0aec0; padding:10px;">표시할 주문이 없습니다.</div>';
       } else {
-        // 위치별(트립분할) 보기 - 완료된 주문은 통째로 제외
         var flat = [];
         orders.forEach(function (o) {
           if (o.isDone) return;
